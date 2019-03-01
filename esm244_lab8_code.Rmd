@@ -1,0 +1,159 @@
+---
+title: "ESM 244 Lab 8"
+author: "Sam Csik"
+date: "2/28/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(plotly)
+library(RColorBrewer)
+library(NbClust)
+library(cluster)
+library(dendextend)
+library(ggdendro)
+library(pdftools)
+library(tidytext)
+library(wordcloud)
+```
+
+###Part 1. k-means clustering
+```{r}
+iris_nice <- iris %>% 
+  clean_names()
+
+ggplot(iris_nice) +
+  geom_point(aes(x = petal_length, y = petal_width, color = species))
+```
+
+How many clusters do YOU think should exist, R?
+
+```{r}
+number_est <- NbClust(iris_nice[1:4], min.nc = 2, max.nc = 10, method = "kmeans")
+
+# We'll stick with 3 clusters when we perform k-means
+```
+
+Perform k-means clustering with 3 groups:
+```{r}
+iris_km <- kmeans(iris_nice[1:4], 3)
+
+# normally this is just exploratory
+iris_km$size
+iris_km$centers
+iris_km$cluster
+
+iris_cl <- data.frame(iris_nice, cluster_no = factor(iris_km$cluster))
+
+# look at a basic 
+ggplot(iris_cl) + 
+  geom_point(aes(x = sepal_length, y = sepal_width, color = cluster_no)) # obs overlap between clusters...
+
+ggplot(iris_cl) +
+  geom_point(aes(x = petal_length,
+                 y = petal_width,
+                 color = cluster_no,
+                 pch = species)) +
+  scale_color_brewer(palette = "Set2")
+
+plot_ly(x = iris_cl$petal_length,
+        y = iris_cl$petal_width,
+        z = iris_cl$sepal_width,
+        type = "scatter3d",
+        color = iris_cl$cluster_no,
+        symbol = iris_cl$species,
+        colors = "Set1")
+```
+
+### Part 2. Hierarchical cluster analysis
+```{r}
+wb_env <- read_csv("wb_env.csv")
+
+# only keep the top 20 ghg emitters 
+wb_ghg_20 <- wb_env %>% 
+  arrange(-ghg) %>% 
+  head(20)
+
+wb_scaled <- as.data.frame(scale(wb_ghg_20[3:7]))
+rownames(wb_scaled) <- wb_ghg_20$name
+
+diss <- dist(wb_scaled, method = "euclidean")
+
+# Hierarchical agglomerative clustering by complete linkage
+
+hc_complete <- hclust(diss, method = "complete")
+
+plot(hc_complete)
+
+hc_div <- diana(diss)
+plot(hc_div)
+
+dend1 <- as.dendrogram(hc_complete)
+dend2 <- as.dendrogram(hc_div)
+
+tanglegram(dend1, dend2)
+
+ggdendrogram(hc_complete, 
+             rotate = TRUE) +
+  theme_minimal()
+
+```
+
+###Part 3. Intro to text analysis: pdftools, stringer, tidytext
+
+```{r}
+greta_thunberg <- file.path("greta_thunberg.pdf")
+thunberg_text <- pdf_text(greta_thunberg)
+
+thunberg_df <- data.frame(text = thunberg_text) %>% 
+  mutate(text_full = str_split(text, '\\n')) %>% 
+  unnest(text_full)
+
+speech_text <- thunberg_df %>% 
+  select(text_full) %>% 
+  slice(4:18)
+
+sep_words <- speech_text %>% 
+  unnest_tokens(word, text_full)
+
+word_count <- sep_words %>% 
+  count(word, sort = TRUE)
+
+words_stop <- sep_words %>% 
+  anti_join(stop_words)
+
+pos_words <- get_sentiments("afinn") %>% 
+  filter(score == 5 | score == 4) %>% 
+  head(20)
+
+neutral_words <- get_sentiments("afinn") %>% 
+  filter(between(score, -1, 1)) %>% 
+  head(20)
+```
+
+Bind some lexicon information to our actual speech words (non-stop words)
+```{r}
+sent_afinn <- words_stop %>% 
+  inner_join(get_sentiments("afinn"))
+
+sent_nrc <- words_stop %>% 
+  inner_join(get_sentiments("nrc"))
+
+nrc_counts <- sent_nrc %>% 
+  group_by(sentiment) %>% 
+  tally()
+
+wordcloud(word_count$word,
+          freq = word_count$n, min.freq = 1,
+          max.words = 65,
+          scale = c(2, 0.1), colors = brewer.pal(3, "Dark2"))
+```
+
